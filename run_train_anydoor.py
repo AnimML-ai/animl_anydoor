@@ -1,5 +1,6 @@
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
+
 from datasets_anydoor.ytb_vos import YoutubeVOSDataset
 from datasets_anydoor.ytb_vis import YoutubeVISDataset
 from datasets_anydoor.saliency_modular import SaliencyDataset
@@ -12,6 +13,9 @@ from datasets_anydoor.mose import MoseDataset
 from datasets_anydoor.vitonhd import VitonHDDataset
 from datasets_anydoor.fashiontryon import FashionTryonDataset
 from datasets_anydoor.lvis import LvisDataset
+
+from datasets_anydoor.doly import DolyDataset
+
 from cldm.logger import ImageLogger
 from cldm.model import create_model, load_state_dict
 from torch.utils.data import ConcatDataset
