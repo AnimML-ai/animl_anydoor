@@ -3,17 +3,19 @@ import einops
 import numpy as np
 import torch
 import random
+
+from cv2 import cvtColor
 from pytorch_lightning import seed_everything
 from cldm.model import create_model, load_state_dict
 from cldm.ddim_hacked import DDIMSampler
 from cldm.hack import disable_verbosity, enable_sliced_attention
-from datasets.data_utils import * 
+from datasets_anydoor.data_utils import *
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
 import albumentations as A
 from omegaconf import OmegaConf
 from PIL import Image
-
+import cv2
 
 save_memory = False
 disable_verbosity()
@@ -29,7 +31,6 @@ model = create_model(model_config ).cpu()
 model.load_state_dict(load_state_dict(model_ckpt, location='cuda'))
 model = model.cuda()
 ddim_sampler = DDIMSampler(model)
-
 
 
 def aug_data_mask(image, mask):
@@ -76,7 +77,7 @@ def process_pairs(ref_image, ref_mask, tar_image, tar_mask):
     masked_ref_image_compose, ref_mask_compose = masked_ref_image, ref_mask #aug_data_mask(masked_ref_image, ref_mask) 
     masked_ref_image_aug = masked_ref_image_compose.copy()
     ref_mask_3 = np.stack([ref_mask_compose,ref_mask_compose,ref_mask_compose],-1)
-    ref_image_collage = sobel(masked_ref_image_compose, ref_mask_compose/255)
+    ref_image_collage = sobel(masked_ref_image_compose, ref_mask_compose/255, thresh=0)
 
     # ========= Target ===========
     tar_box_yyxx = get_bbox_from_mask(tar_mask)
@@ -88,6 +89,9 @@ def process_pairs(ref_image, ref_mask, tar_image, tar_mask):
     y1,y2,x1,x2 = tar_box_yyxx_crop
 
     cropped_target_image = tar_image[y1:y2,x1:x2,:]
+    collage_mask = tar_mask[y1:y2,x1:x2]
+    collage_mask = np.stack([collage_mask,collage_mask,collage_mask],-1)
+
     tar_box_yyxx = box_in_box(tar_box_yyxx, tar_box_yyxx_crop)
     y1,y2,x1,x2 = tar_box_yyxx
 
@@ -99,14 +103,14 @@ def process_pairs(ref_image, ref_mask, tar_image, tar_mask):
     collage = cropped_target_image.copy() 
     collage[y1:y2,x1:x2,:] = ref_image_collage
 
-    collage_mask = cropped_target_image.copy() * 0.0
-    collage_mask[y1:y2,x1:x2,:] = 1.0
+    # collage_mask = cropped_target_image.copy() * 0.0
+    # collage_mask[y1:y2,x1:x2,:] = 1.0
 
     # the size before pad
     H1, W1 = collage.shape[0], collage.shape[1]
     cropped_target_image = pad_to_square(cropped_target_image, pad_value = 0, random = False).astype(np.uint8)
     collage = pad_to_square(collage, pad_value = 0, random = False).astype(np.uint8)
-    collage_mask = pad_to_square(collage_mask, pad_value = -1, random = False).astype(np.uint8)
+    collage_mask = pad_to_square(collage_mask, pad_value = 0, random = False).astype(np.uint8)
 
     # the size after pad
     H2, W2 = collage.shape[0], collage.shape[1]
@@ -114,12 +118,16 @@ def process_pairs(ref_image, ref_mask, tar_image, tar_mask):
     collage = cv2.resize(collage, (512,512)).astype(np.float32)
     collage_mask  = (cv2.resize(collage_mask, (512,512)).astype(np.float32) > 0.5).astype(np.float32)
 
+    cv2.imwrite("/tmp/item_collage.png", np.concatenate([collage, 255*collage_mask[:,:,:1]], -1).astype(np.uint8))
+    cv2.imwrite("/tmp/item_jpg.jpg", cropped_target_image.astype(np.uint8))
+    cv2.imwrite("/tmp/item_ref.jpg", masked_ref_image_aug.astype(np.uint8))
+
     masked_ref_image_aug = masked_ref_image_aug  / 255 
     cropped_target_image = cropped_target_image / 127.5 - 1.0
     collage = collage / 127.5 - 1.0 
     collage = np.concatenate([collage, collage_mask[:,:,:1]  ] , -1)
 
-    item = dict(ref=masked_ref_image_aug.copy(), jpg=cropped_target_image.copy(), hint=collage.copy(), extra_sizes=np.array([H1, W1, H2, W2]), tar_box_yyxx_crop=np.array( tar_box_yyxx_crop ) ) 
+    item = dict(ref=masked_ref_image_aug.copy(), jpg=cropped_target_image.copy(), hint=collage.copy(), extra_sizes=np.array([H1, W1, H2, W2]), tar_box_yyxx_crop=np.array( tar_box_yyxx_crop ) )
     return item
 
 
@@ -147,16 +155,16 @@ def crop_back( pred, tar_image,  extra_sizes, tar_box_yyxx_crop):
     return gen_image
 
 
-def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_scale = 5.0):
+def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_scale=5.0, strength=1.0):
     item = process_pairs(ref_image, ref_mask, tar_image, tar_mask)
-    ref = item['ref'] * 255
-    tar = item['jpg'] * 127.5 + 127.5
-    hint = item['hint'] * 127.5 + 127.5
-
-    hint_image = hint[:,:,:-1]
-    hint_mask = item['hint'][:,:,-1] * 255
-    hint_mask = np.stack([hint_mask,hint_mask,hint_mask],-1)
-    ref = cv2.resize(ref.astype(np.uint8), (512,512))
+    # ref = item['ref'] * 255
+    # tar = item['jpg'] * 127.5 + 127.5
+    # hint = item['hint'] * 127.5 + 127.5
+    #
+    # hint_image = hint[:,:,:-1]
+    # hint_mask = item['hint'][:,:,-1] * 255
+    # hint_mask = np.stack([hint_mask,hint_mask,hint_mask],-1)
+    # ref = cv2.resize(ref.astype(np.uint8), (512,512))
 
     seed = random.randint(0, 65535)
     if save_memory:
@@ -189,7 +197,7 @@ def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_sc
     # ====
     num_samples = 1 #gr.Slider(label="Images", minimum=1, maximum=12, value=1, step=1)
     image_resolution = 512  #gr.Slider(label="Image Resolution", minimum=256, maximum=768, value=512, step=64)
-    strength = 1  #gr.Slider(label="Control Strength", minimum=0.0, maximum=2.0, value=1.0, step=0.01)
+    # strength = 1  #gr.Slider(label="Control Strength", minimum=0.0, maximum=2.0, value=1.0, step=0.01)
     guess_mode = False #gr.Checkbox(label='Guess Mode', value=False)
     #detect_resolution = 512  #gr.Slider(label="Segmentation Resolution", minimum=128, maximum=1024, value=512, step=1)
     ddim_steps = 50 #gr.Slider(label="Steps", minimum=1, maximum=100, value=20, step=1)
@@ -208,8 +216,8 @@ def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_sc
     x_samples = model.decode_first_stage(samples)
     x_samples = (einops.rearrange(x_samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy()#.clip(0, 255).astype(np.uint8)
 
-    result = x_samples[0][:,:,::-1]
-    result = np.clip(result,0,255)
+    # result = x_samples[0][:,:,::-1]
+    # result = np.clip(result,0,255)
 
     pred = x_samples[0]
     pred = np.clip(pred,0,255)[1:,:,:]
@@ -217,6 +225,27 @@ def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_sc
     tar_box_yyxx_crop = item['tar_box_yyxx_crop'] 
     gen_image = crop_back(pred, tar_image, sizes, tar_box_yyxx_crop) 
     return gen_image
+
+
+def save_video_from_images(images, output_path, fps=30):
+    if not images:
+        raise ValueError("No images to write.")
+
+    # Get dimensions from the first image
+    height, width = images[0].shape[:2]
+
+    # Define codec and create VideoWriter object
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # You can also use 'XVID', 'avc1', etc.
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+    for img in images:
+        # Ensure image has 3 channels
+        if img.shape[2] == 4:
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        out.write(img)
+
+    out.release()
+    print(f"Video saved to {output_path}")
 
 
 if __name__ == '__main__': 
@@ -258,36 +287,117 @@ if __name__ == '__main__':
     from omegaconf import OmegaConf
     import os 
     DConf = OmegaConf.load('./configs/datasets.yaml')
-    save_dir = './VITONGEN'
-    if not os.path.exists(save_dir):
-        os.mkdir(save_dir)
 
-    test_dir = DConf.Test.VitonHDTest.image_dir
+    mode = "doly"
+    # mode = "viton"
+
+    if mode == "doly":
+        # test_dir = "/root/animl_process/dolies/prod/AniML_ibwWNzh8zS1b7ABfydiI/astoria_white_satin_H2DNu4Qjl01ru7X0HTzZ/prod2/GroundLevel_original_9x16_360_AniML/no_id/composited"
+        # test_dir = "/root/animl_process/dolies/prod/AniML_ibwWNzh8zS1b7ABfydiI/astoria_white_satin_H2DNu4Qjl01ru7X0HTzZ/prod2/Corner_MarbleCorner_9x16_180_AniML/no_id/images_no_bg"
+        test_dir = "/root/animl_process/dolies/prod/AniML_ibwWNzh8zS1b7ABfydiI/astoria_white_satin_H2DNu4Qjl01ru7X0HTzZ/prod2_photo/Pavement_original_9x16_quick_AniML/no_id/images_no_bg"
+        extension = ".png" if "_photo/" in test_dir else ".jpg"
+        output_dir = test_dir.replace('images_no_bg', 'composited_diffusion')
+        if not os.path.exists(output_dir):
+            os.mkdir(output_dir)
+        save_dir = './DOLY'
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
+    else:
+        save_dir = './VITONGEN'
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
+        test_dir = DConf.Test.VitonHDTest.image_dir
+
     image_names = os.listdir(test_dir)
-    
+    image_names = sorted(image_names, key=lambda name: int(name.split('.')[0]))
+    frames = []
+
     for image_name in image_names:
         ref_image_path = os.path.join(test_dir, image_name)
-        tar_image_path = ref_image_path.replace('/cloth/', '/image/')
-        ref_mask_path = ref_image_path.replace('/cloth/','/cloth-mask/')
-        tar_mask_path = ref_image_path.replace('/cloth/', '/image-parse-v3/').replace('.jpg','.png')
+        if mode == "doly":
+            image_idx = image_name.split('.')[0]
+            ref_mask_path = ref_image_path
 
-        ref_image = cv2.imread(ref_image_path)
-        ref_image = cv2.cvtColor(ref_image, cv2.COLOR_BGR2RGB)
+            ref_image_bgra = cv2.imread(ref_image_path, cv2.IMREAD_UNCHANGED)
+            ref_image = cv2.cvtColor(ref_image_bgra[..., :3], cv2.COLOR_BGR2RGB)
+            ref_mask = (ref_image_bgra[..., 3] > 128).astype(np.uint8)
 
-        gt_image = cv2.imread(tar_image_path)
-        gt_image = cv2.cvtColor(gt_image, cv2.COLOR_BGR2RGB)
+            tar_image_path = os.path.join(test_dir.replace('/images_no_bg', '/composited'), f'take_{image_idx}{extension}') #ref_image_path.replace('/cloth/','/cloth-mask/')
 
-        ref_mask = (cv2.imread(ref_mask_path) > 128).astype(np.uint8)[:,:,0]
+            gt_image = cv2.imread(tar_image_path, cv2.IMREAD_UNCHANGED)
+            tar_mask = ref_mask.copy()
+            # kernel = np.ones([3,3]).astype(np.uint8)
+            # tar_mask = cv2.dilate(ref_mask, kernel, iterations=15)
 
-        tar_mask = Image.open(tar_mask_path ).convert('P')
-        tar_mask= np.array(tar_mask)
-        tar_mask = tar_mask == 5
+        else:
+            image_idx = image_name.split('_')[1].split('.')[0]
+            tar_image_path = os.path.join(test_dir.replace('/cloth', '/image'), f'image_{image_idx}.jpg') #ref_image_path.replace('/cloth/', '/image/')
+            ref_mask_path = os.path.join(test_dir.replace('/cloth', '/cloth_mask'), f'cloth_mask_{image_idx}.jpg') #ref_image_path.replace('/cloth/','/cloth-mask/')
+            tar_mask_path = os.path.join(test_dir.replace('/cloth', '/parse'), f'parse_{image_idx}.jpg') #ref_image_path.replace('/cloth/', '/image-parse-v3/').replace('.jpg','.png')
 
-        gen_image = inference_single_image(ref_image, ref_mask, gt_image.copy(), tar_mask)
-        gen_path = os.path.join(save_dir, image_name)
+            ref_image = cv2.imread(ref_image_path)
+            ref_image = cv2.cvtColor(ref_image, cv2.COLOR_BGR2RGB)
 
-        vis_image = cv2.hconcat([ref_image, gt_image, gen_image])
-        cv2.imwrite(gen_path, vis_image[:,:,::-1])
+            gt_image = cv2.imread(tar_image_path)
+            gt_image = cv2.cvtColor(gt_image, cv2.COLOR_BGR2RGB)
+
+            ref_mask = (cv2.imread(ref_mask_path) > 128).astype(np.uint8)[:,:,0]
+
+            tar_mask = Image.open(tar_mask_path ).convert('P')
+            tar_mask= np.array(tar_mask)
+            tar_mask = tar_mask == 53
+            # tar_mask = tar_mask > 0
+
+        gt_image_mask = np.where(tar_mask[..., None], np.full_like(gt_image, 255), gt_image)
+        image_name = os.path.splitext(image_name)[0]
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 3.0
+        font_color = (255, 0, 0)  # Blue in BGR
+        thickness = 2
+        position = (10, 25)  # Top-left corner with padding
+
+        hori_images = []
+        # for guidance_scale in [5.0, 6.0, 7.0]:
+        for guidance_scale in [5.0]:
+            vert_images = []
+            for strength in [1.0]:
+            # for strength in [1., 1.25, 1.5]:
+                gen_image = inference_single_image(ref_image, ref_mask, gt_image.copy(), tar_mask, guidance_scale=guidance_scale, strength=strength)
+
+                # Add label: G and S
+                label = f"G={guidance_scale:.1f} | S={strength:.1f}"
+                labeled_image = gen_image.copy()
+                (label_width, label_height), _ = cv2.getTextSize(label, font, font_scale, thickness)
+                position = (int(label_height * 0.5), int(label_height * 1.2))
+                cv2.putText(labeled_image, label, position, font, font_scale, font_color, thickness, cv2.LINE_AA)
+
+                kernel = np.ones([3, 3])
+                tar_mask_eroded = cv2.erode(tar_mask, kernel, iterations=1)
+                final_tar_mask = 0.5 * (tar_mask_eroded + tar_mask)
+
+                # vis_image = cv2.hconcat([ref_image, gt_image_mask, gen_image])
+                composited_image = (final_tar_mask[..., None] * ref_image + (1 - final_tar_mask[..., None]) * gen_image).astype(np.uint8)
+
+                vis_image = cv2.hconcat([ref_image, composited_image, gen_image])
+
+                composited_image = cvtColor(composited_image, cv2.COLOR_BGR2RGB)
+                frames.append(composited_image)
+                gen_path = os.path.join(output_dir, f'take_ {image_name}{extension}')
+                cv2.imwrite(gen_path, composited_image)
+
+                gen_test_path = os.path.join(save_dir, f'{image_name}_{guidance_scale:0.2f}_{strength:0.2f}.jpg')
+                cv2.imwrite(gen_test_path, vis_image[:,:,::-1])
+                vert_images.append(labeled_image)
+
+            vis_vert_images = cv2.vconcat(vert_images)
+            hori_images.append(vis_vert_images)
+        vis_hori_images = cv2.hconcat(hori_images)
+        # gen_path = os.path.join(save_dir, f'{image_name}_ALL.jpg')
+        # cv2.imwrite(gen_path, vis_hori_images[:, :, ::-1])
+
+    video_path = os.path.join(save_dir, f'video.mp4')
+    save_video_from_images(images=frames, output_path=video_path, fps=24)
     #'''
 
     
