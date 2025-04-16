@@ -80,6 +80,6 @@ model:
 
     cond_stage_config:
       target: ldm.modules.encoders.modules.FrozenDinoV2Encoder
-      weight: /root/dev/animl_anydoor/checkpoints/dinov2_vitg14_reg4_pretrain.pth
+      weight: /media/vahid/DATA/projects/animl_anydoor/checkpoints/dinov2_vitg14_reg4_pretrain.pth
     
 

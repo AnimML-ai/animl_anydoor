@@ -44,6 +44,9 @@ Train:
     image_dir: path/COCO/train2017
     json_path: path/lvis_v1/lvis_v1_train.json
 
+  animl:
+    data_dir: /media/vahid/DATA/projects/splatting_pipeline/animl_data/trained_objects/prod
+
   SAM:
     sub1: path/SAM/0000
     sub2: path/SAM/0001
