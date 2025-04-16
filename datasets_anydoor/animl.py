@@ -11,13 +11,13 @@ import albumentations as A
 
 class AnimlDataset(BaseDataset):
     def __init__(self, data_dir):
-        self.data = glob.glob(f'{data_dir}/*/**/pair_mask_train_data')
+        self.data = glob.glob(f'{data_dir}/*/**/pair_mask_train_data')[:100]
         self.size = (512,512)
         self.clip_size = (224,224)
         self.dynamic = 2
 
     def __len__(self):
-        return len(self.data)*1
+        return len(self.data)
 
     def check_region_size(self, image, yyxx, ratio, mode = 'max'):
         pass_flag = True
@@ -56,6 +56,8 @@ class AnimlDataset(BaseDataset):
 
         ref_mask = cv2.rotate((mask[:mask.shape[0]//2] > 128).astype(np.uint8), cv2.ROTATE_90_CLOCKWISE)
         tar_mask = cv2.rotate((mask[mask.shape[0]//2:] > 128).astype(np.uint8), cv2.ROTATE_90_CLOCKWISE)
+
+        del image, mask
 
         print(ref_image.shape, ref_mask.shape, tar_image.shape, tar_mask.shape)
 
