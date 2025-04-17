@@ -30,9 +30,9 @@ if save_memory:
 
 # Configs
 resume_path = '/media/vahid/DATA/projects/animl_anydoor/checkpoints/epoch=1-step=8687.ckpt'
-batch_size = 8 #16
+batch_size = 12 #16
 logger_freq = 1000
-learning_rate = 1e-5
+learning_rate = 2e-6
 sd_locked = False
 only_mid_control = False
 n_gpus = 1
