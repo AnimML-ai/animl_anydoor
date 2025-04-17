@@ -11,7 +11,13 @@ import albumentations as A
 
 class AnimlDataset(BaseDataset):
     def __init__(self, data_dir):
-        self.data = glob.glob(f'{data_dir}/*/**/pair_mask_train_data')[:100]
+        obj_list = glob.glob(f'{data_dir}/*/**/pair_mask_train_data')
+        self.data = []
+        for obj in obj_list:
+            img_list = sorted(glob.glob(f'{obj}/render_data/*'))
+            mask_list = sorted(glob.glob(f'{obj}/mask_data/*'))
+            self.data += zip(img_list, mask_list)
+
         self.size = (512,512)
         self.clip_size = (224,224)
         self.dynamic = 2
@@ -35,12 +41,7 @@ class AnimlDataset(BaseDataset):
             
     def get_sample(self, idx):
 
-        image_path = glob.glob(f'{self.data[idx]}/render_data')
-        mask_path = glob.glob(f'{self.data[idx]}/mask_data')
-        ind_img = np.random.randint(len(image_path))
-
-        image_path = image_path[ind_img]
-        mask_path = mask_path[ind_img]
+        image_path, mask_path = self.data[idx]
 
         # Read Image and Mask
         image = cv2.imread(image_path)
@@ -58,8 +59,6 @@ class AnimlDataset(BaseDataset):
         tar_mask = cv2.rotate((mask[mask.shape[0]//2:] > 128).astype(np.uint8), cv2.ROTATE_90_CLOCKWISE)
 
         del image, mask
-
-        print(ref_image.shape, ref_mask.shape, tar_image.shape, tar_mask.shape)
 
         item_with_collage = self.process_pairs(ref_image, ref_mask, tar_image, tar_mask, max_ratio = 1.0)
         sampled_time_steps = self.sample_timestep()
