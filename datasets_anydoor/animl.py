@@ -48,17 +48,15 @@ class AnimlDataset(BaseDataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, (image.shape[1]//2, image.shape[0]//2))
 
-        ref_image = cv2.rotate(image[:image.shape[0]//2], cv2.ROTATE_90_CLOCKWISE)
-        tar_image = cv2.rotate(image[image.shape[0]//2:], cv2.ROTATE_90_CLOCKWISE)
+        tar_image = cv2.rotate(image[:image.shape[0]//2], cv2.ROTATE_90_CLOCKWISE)
+        ref_image = cv2.rotate(image[image.shape[0]//2:], cv2.ROTATE_90_CLOCKWISE)
 
         mask = Image.open(mask_path).convert('P')
         mask = np.array(mask)
         mask = cv2.resize(mask, (mask.shape[1]//2, mask.shape[0]//2))
 
-        ref_mask = cv2.rotate((mask[:mask.shape[0]//2] > 128).astype(np.uint8), cv2.ROTATE_90_CLOCKWISE)
-        tar_mask = cv2.rotate((mask[mask.shape[0]//2:] > 128).astype(np.uint8), cv2.ROTATE_90_CLOCKWISE)
-
-        del image, mask
+        tar_mask = cv2.rotate((mask[:mask.shape[0]//2] > 128).astype(np.uint8), cv2.ROTATE_90_CLOCKWISE)
+        ref_mask = cv2.rotate((mask[mask.shape[0]//2:] > 128).astype(np.uint8), cv2.ROTATE_90_CLOCKWISE)
 
         item_with_collage = self.process_pairs(ref_image, ref_mask, tar_image, tar_mask, max_ratio = 1.0)
         sampled_time_steps = self.sample_timestep()
