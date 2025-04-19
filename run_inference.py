@@ -325,7 +325,9 @@ if __name__ == '__main__':
             tar_image_path = os.path.join(test_dir.replace('/images_no_bg', '/composited'), f'take_{image_idx}{extension}') #ref_image_path.replace('/cloth/','/cloth-mask/')
 
             gt_image = cv2.imread(tar_image_path, cv2.IMREAD_UNCHANGED)
+            gt_image = cv2.cvtColor(gt_image, cv2.COLOR_BGR2RGB)
             tar_mask = ref_mask.copy()
+
             # kernel = np.ones([3,3]).astype(np.uint8)
             # tar_mask = cv2.dilate(ref_mask, kernel, iterations=15)
 

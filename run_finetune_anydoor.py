@@ -29,8 +29,8 @@ if save_memory:
     enable_sliced_attention()
 
 # Configs
-resume_path = '/media/vahid/DATA/projects/animl_anydoor/checkpoints/epoch=1-step=8687.ckpt'
-batch_size = 12 #16
+resume_path = './checkpoints/epoch=1-step=8687.ckpt'
+batch_size = 12
 logger_freq = 1000
 learning_rate = 2e-6
 sd_locked = False
@@ -72,7 +72,18 @@ dataset13 = AnimlDataset(**DConf.Train.animl)
 dataset = ConcatDataset([dataset13])
 dataloader = DataLoader(dataset, num_workers=8, batch_size=batch_size, shuffle=True)
 logger = ImageLogger(batch_frequency=logger_freq)
-trainer = pl.Trainer(gpus=n_gpus, strategy="ddp", precision=16, accelerator="gpu", callbacks=[logger], progress_bar_refresh_rate=1, accumulate_grad_batches=accumulate_grad_batches)
+trainer = pl.Trainer(
+    gpus=n_gpus,
+    strategy="ddp",
+    precision=16,
+    accelerator="gpu",
+    callbacks=[logger],
+    progress_bar_refresh_rate=1,
+    accumulate_grad_batches=accumulate_grad_batches,
+    default_root_dir="lightning_logs/animl",
+    # resume_from_checkpoint="./lightning_logs/version_0/checkpoints/epoch=1-step=1057.ckpt",
+    # resume_from_checkpoint="./lightning_logs/version_1/checkpoints/epoch=3-step=2115.ckpt",
+)
 
 # Train!
 trainer.fit(model, dataloader)
