@@ -43,6 +43,27 @@ def expand_image(image, ratio, expand_value):
     image = np.pad(image, pad_param_image, 'constant', constant_values=expand_value)
     return image
 
+def sobel(img, mask, thresh=50):
+    '''Calculating the high-frequency map.'''
+    H, W = img.shape[0], img.shape[1]
+    img = cv2.resize(img, (256, 256))
+    mask = (cv2.resize(mask, (256, 256)) > 0.5).astype(np.uint8)
+    # kernel = np.ones((5, 5), np.uint8)
+    # mask = cv2.erode(mask, kernel, iterations=2)
+
+    Ksize = 3
+    sobelx = cv2.Sobel(img, cv2.CV_64F, 1, 0, ksize=Ksize)
+    sobely = cv2.Sobel(img, cv2.CV_64F, 0, 1, ksize=Ksize)
+    sobel_X = cv2.convertScaleAbs(sobelx)
+    sobel_Y = cv2.convertScaleAbs(sobely)
+    scharr = cv2.addWeighted(sobel_X, 0.5, sobel_Y, 0.5, 0)
+    scharr = np.max(scharr, -1) * mask
+
+    scharr[scharr < thresh] = 0.0
+    scharr = np.stack([scharr, scharr, scharr], -1)
+    scharr = (scharr.astype(np.float32) / 255 * img.astype(np.float32)).astype(np.uint8)
+    scharr = cv2.resize(scharr, (W, H))
+    return scharr
 
 class AnimlDataset(BaseDataset):
     def __init__(self, data_dir):
@@ -56,6 +77,9 @@ class AnimlDataset(BaseDataset):
         self.size = (512,512)
         self.clip_size = (224,224)
         self.dynamic = 2
+
+        self.debug_vis = False
+
 
     def __len__(self):
         return len(self.data)
@@ -75,6 +99,8 @@ class AnimlDataset(BaseDataset):
         return pass_flag
             
     def get_sample(self, idx):
+        # print(f"Processing idx = {idx}")
+        # idx = 3141
 
         image_path, mask_path = self.data[idx]
 
@@ -103,14 +129,36 @@ class AnimlDataset(BaseDataset):
         assert self.check_mask_area(ref_mask) == True
         assert self.check_mask_area(tar_mask) == True
 
+        if self.debug_vis:
+            ref_image_rgba = np.concatenate([ref_image, 255*ref_mask[..., None]], axis=-1)
+            cv2.imwrite('/tmp/ref_image_rgba.png', cv2.cvtColor(ref_image_rgba, cv2.COLOR_BGRA2RGBA))
+            tar_image_rgba = np.concatenate([tar_image, 255*tar_mask[..., None]], axis=-1)
+            cv2.imwrite('/tmp/tar_image_rgba.png', cv2.cvtColor(tar_image_rgba, cv2.COLOR_BGRA2RGBA))
+
+        # kernel = np.ones((3,3))
+        # ref_mask = cv2.dilate(ref_mask, kernel, iterations = 10)
+        # tar_mask = cv2.dilate(tar_mask, kernel, iterations = 10)
+
+        ref_image = expand_image(ref_image, 1.5,  255)
+        ref_mask = expand_image(ref_mask, 1.5,  0)
+        tar_image = expand_image(tar_image, 1.5,  255)
+        tar_mask = expand_image(tar_mask, 1.5,  0)
+
         ### REFERENCE ###
         ref_box_yyxx = get_bbox_from_mask(ref_mask)
         assert self.check_region_size(ref_mask, ref_box_yyxx, ratio=0.10, mode='min') == True
 
+
         # Filtering background for the reference image
         ref_mask_3 = np.stack([ref_mask, ref_mask, ref_mask], -1)
         masked_ref_image = ref_image * ref_mask_3 + np.ones_like(ref_image) * 255 * (1 - ref_mask_3)
-        ref_image_collage = sobel(masked_ref_image, ref_mask)
+        y1,y2,x1,x2 = ref_box_yyxx
+        ref_image_collage = np.zeros_like(masked_ref_image)
+        ref_image_collage[y1:y2, x1:x2] = sobel(masked_ref_image[y1:y2, x1:x2], ref_mask[y1:y2, x1:x2])
+
+        if self.debug_vis:
+            cv2.imwrite('/tmp/masked_ref_image.jpg', cv2.cvtColor(masked_ref_image, cv2.COLOR_BGR2RGB))
+            cv2.imwrite('/tmp/ref_image_collage.jpg', cv2.cvtColor(ref_image_collage, cv2.COLOR_BGR2RGB))
 
         obj_y1, obj_y2, obj_x1, obj_x2 = ref_box_yyxx
         obj_center_y, obj_center_x = (obj_y1 + obj_y2) // 2, (obj_x1 + obj_x2) // 2
@@ -134,9 +182,14 @@ class AnimlDataset(BaseDataset):
         # cropped_target_image[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] = np.where(tar_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2, None] > 0, collage, cropped_target_image[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2])
 
         hint = tar_image.copy()
-        hint[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] = np.where(tar_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2, None] > 0, collage, hint[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2])
         hint_mask = tar_mask.copy()
-        hint_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] = np.where(tar_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] > 0, collage_mask, np.full_like(collage_mask, 2))
+        use_mask = False
+        if use_mask:
+            hint[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] = np.where(tar_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2, None] > 0, collage, hint[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2])
+            hint_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] = np.where(tar_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] > 0, collage_mask, np.full_like(collage_mask, 0))
+        else:
+            hint[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] = collage
+            hint_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] = collage_mask
 
         tar_box_yyxx = get_bbox_from_mask(tar_mask)
         tar_box_yyxx = expand_bbox(tar_mask, tar_box_yyxx, ratio=[1.1,1.2]) #1.1  1.3
@@ -156,9 +209,10 @@ class AnimlDataset(BaseDataset):
         H2, W2 = cropped_target_image.shape[0], cropped_target_image.shape[1]
 
         ### DEBUG ###
-        cv2.imwrite('/tmp/masked_ref_image.jpg', cv2.cvtColor(masked_ref_image, cv2.COLOR_BGR2RGB))
-        cv2.imwrite('/tmp/cropped_target_image.jpg', cv2.cvtColor(cropped_target_image, cv2.COLOR_BGR2RGB))
-        cv2.imwrite('/tmp/collage.png', cv2.cvtColor(np.concatenate([collage, collage_mask.astype(np.uint8)[..., None]], axis=-1), cv2.COLOR_BGR2RGB))
+        if self.debug_vis:
+            cv2.imwrite('/tmp/masked_ref_image.jpg', cv2.cvtColor(masked_ref_image, cv2.COLOR_BGR2RGB))
+            cv2.imwrite('/tmp/cropped_target_image.jpg', cv2.cvtColor(cropped_target_image, cv2.COLOR_BGR2RGB))
+            cv2.imwrite('/tmp/collage.png', cv2.cvtColor(np.concatenate([collage, collage_mask.astype(np.uint8)[..., None]], axis=-1), cv2.COLOR_BGR2RGB))
 
         ### RESIZING ###
         masked_ref_image = masked_ref_image[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2]
