@@ -17,7 +17,7 @@ from omegaconf import OmegaConf
 from PIL import Image
 import cv2
 
-from datasets_anydoor.animl import expand_image, pad_to_square, sobel
+from datasets_anydoor.animl import AnimlDataset, expand_image
 
 save_memory = False
 disable_verbosity()
@@ -45,95 +45,7 @@ def aug_data_mask(image, mask):
     transformed_mask = transformed["mask"]
     return transformed_image, transformed_mask
 
-
-def process_pairs(ref_image, ref_mask, tar_image, tar_mask, max_ratio=0.8):
-    ### REFERENCE ###
-    ref_box_yyxx = get_bbox_from_mask(ref_mask)
-
-
-    # Filtering background for the reference image
-    ref_mask_3 = np.stack([ref_mask, ref_mask, ref_mask], -1)
-    masked_ref_image = ref_image * ref_mask_3 + np.ones_like(ref_image) * 255 * (1 - ref_mask_3)
-    y1,y2,x1,x2 = ref_box_yyxx
-    ref_image_collage = np.zeros_like(masked_ref_image)
-    ref_image_collage[y1:y2, x1:x2] = sobel(masked_ref_image[y1:y2, x1:x2], ref_mask[y1:y2, x1:x2])
-
-    cv2.imwrite('/tmp/masked_ref_image.jpg', cv2.cvtColor(masked_ref_image, cv2.COLOR_BGR2RGB))
-    cv2.imwrite('/tmp/ref_image_collage.jpg', cv2.cvtColor(ref_image_collage, cv2.COLOR_BGR2RGB))
-
-    obj_y1, obj_y2, obj_x1, obj_x2 = ref_box_yyxx
-    obj_center_y, obj_center_x = (obj_y1 + obj_y2) // 2, (obj_x1 + obj_x2) // 2
-
-    dilated_obj_ratio = np.random.randint(11, 15) / 10
-    collage = ref_image_collage[obj_y1:obj_y2, obj_x1:obj_x2]
-    collage = expand_image(collage, dilated_obj_ratio, 0)
-    collage = pad_to_square(collage, pad_value=0)
-    H2, W2 = collage.shape[0], collage.shape[1]
-
-    dilated_square_obj_delta = collage.shape[0] // 2
-    dil_ref_bb_y1, dil_ref_bb_x1 = obj_center_y - dilated_square_obj_delta, obj_center_x - dilated_square_obj_delta
-    dil_ref_bb_y2, dil_ref_bb_x2 = dil_ref_bb_y1 + collage.shape[0], dil_ref_bb_x1 + collage.shape[1]
-
-    collage_mask = ref_mask[obj_y1:obj_y2, obj_x1:obj_x2].astype(np.float32)
-    collage_mask = expand_image(collage_mask, dilated_obj_ratio, 0)
-    collage_mask = pad_to_square(collage_mask, pad_value=2)
-
-    #### TARGET ###
-    # cropped_target_image = tar_image.copy()
-    # cropped_target_image[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] = np.where(tar_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2, None] > 0, collage, cropped_target_image[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2])
-
-    hint = tar_image.copy()
-    hint[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] = np.where(tar_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2, None] > 0, collage, hint[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2])
-    hint_mask = tar_mask.copy()
-    hint_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] = np.where(tar_mask[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2] > 0, collage_mask, np.full_like(collage_mask, 2))
-
-    tar_box_yyxx = get_bbox_from_mask(tar_mask)
-    tar_box_yyxx = expand_bbox(tar_mask, tar_box_yyxx, ratio=[1.1,1.2]) #1.1  1.3
-
-    tar_box_yyxx_crop = expand_bbox(tar_image, tar_box_yyxx, ratio=[1.3, 3.0])
-    tar_box_yyxx_crop = box2squre(tar_image, tar_box_yyxx_crop) # crop box
-    y1,y2,x1,x2 = tar_box_yyxx_crop
-
-    cropped_target_image = tar_image[y1:y2,x1:x2,:]
-    cropped_tar_mask = tar_mask[y1:y2,x1:x2]
-
-    collage = hint[y1:y2,x1:x2]
-    collage_mask = hint_mask[y1:y2,x1:x2]
-
-    H1, W1 = cropped_target_image.shape[0], cropped_target_image.shape[0]
-    H2, W2 = cropped_target_image.shape[0], cropped_target_image.shape[0]
-
-    ### DEBUG ###
-    cv2.imwrite('/tmp/masked_ref_image.jpg', cv2.cvtColor(masked_ref_image, cv2.COLOR_BGR2RGB))
-    cv2.imwrite('/tmp/cropped_target_image.jpg', cv2.cvtColor(cropped_target_image, cv2.COLOR_BGR2RGB))
-    cv2.imwrite('/tmp/collage.png', cv2.cvtColor(np.concatenate([collage, collage_mask.astype(np.uint8)[..., None]], axis=-1), cv2.COLOR_BGR2RGB))
-
-    ### RESIZING ###
-    masked_ref_image = masked_ref_image[dil_ref_bb_y1:dil_ref_bb_y2, dil_ref_bb_x1:dil_ref_bb_x2]
-    masked_ref_image = cv2.resize(masked_ref_image.astype(np.uint8), (224,224) ).astype(np.uint8)
-
-    cropped_target_image = cv2.resize(cropped_target_image.astype(np.uint8), (512, 512)).astype(np.float32)
-
-    collage = cv2.resize(collage.astype(np.uint8), (512, 512)).astype(np.float32)
-    collage_mask = cv2.resize(collage_mask.astype(np.uint8), (512, 512), interpolation=cv2.INTER_NEAREST).astype(np.float32)
-    collage_mask[collage_mask == 2] = -1
-
-    ### NORMALISATION ###
-    masked_ref_image = masked_ref_image / 255
-    cropped_target_image = cropped_target_image / 127.5 - 1.0
-    collage = collage / 127.5 - 1.0
-    collage = np.concatenate([collage, collage_mask[..., None]], -1)
-
-    item = dict(
-        ref=masked_ref_image.copy(),
-        jpg=cropped_target_image.copy(),
-        hint=collage.copy(),
-        extra_sizes=np.array([H1, W1, H2, W2]),
-        tar_box_yyxx_crop=np.array(tar_box_yyxx_crop)
-    )
-    return item
-
-def process_pairs2(ref_image, ref_mask, tar_image, tar_mask):
+def process_pairs(ref_image, ref_mask, tar_image, tar_mask):
     # ========= Reference ===========
     # ref expand 
     ref_box_yyxx = get_bbox_from_mask(ref_mask)
@@ -252,7 +164,7 @@ def inference_single_image(ref_image, ref_mask, tar_image, tar_mask, guidance_sc
     tar_image = expand_image(tar_image, 1.5,  255)
     tar_mask = expand_image(tar_mask, 1.5,  0)
 
-    item = process_pairs(ref_image, ref_mask, tar_image, tar_mask)
+    item = AnimlDataset.process_pairs(ref_image, ref_mask, tar_image, tar_mask)
     # ref = item['ref'] * 255
     # tar = item['jpg'] * 127.5 + 127.5
     # hint = item['hint'] * 127.5 + 127.5
